@@ -1,0 +1,331 @@
+// =============================================================================
+// KLSE Shariah Stocks - Long-Only Trend Breakout Strategy
+// Version: 1.0
+// Platform: TradingView Pine Script v5
+// Market: Bursa Malaysia (KLSE) Shariah-Compliant Stocks
+// Timeframe: 15-minute (optimised)
+// Author: TVBot
+// =============================================================================
+// STRATEGY OVERVIEW:
+//   Long-only trend-following breakout system combining EMA trend filter,
+//   RSI momentum confirmation, volume surge validation, and ATR-based
+//   dynamic risk management. Designed for KLSE Shariah stocks screened for
+//   halal compliance (no riba, no gharar, no haram sectors).
+// =============================================================================
+
+//@version=5
+strategy(
+     title                = "KLSE Shariah | Trend Breakout Strategy v1.0",
+     shorttitle           = "KLSE-SB",
+     overlay              = true,
+     initial_capital      = 10000,          // Default initial capital (MYR)
+     default_qty_type     = strategy.percent_of_equity,
+     default_qty_value    = 10,             // 10% of equity per trade
+     pyramiding           = 0,             // No pyramiding – one position at a time
+     calc_on_every_tick   = false,         // Avoid repainting; evaluate on bar close
+     process_orders_on_close = false,      // Orders fill on next bar open (realistic)
+     commission_type      = strategy.commission.percent,
+     commission_value     = 0.1,           // Default 0.1% per side (adjust as needed)
+     slippage             = 2              // 2 ticks slippage assumption
+     )
+
+// =============================================================================
+// ── SECTION 1: USER INPUTS
+// =============================================================================
+
+// ── 1a. Capital & Commission ──────────────────────────────────────────────────
+i_initialCapital  = input.float(10000,  title="Initial Capital (MYR)",    group="💰 Backtest Settings", minval=100)
+i_commission      = input.float(0.1,    title="Commission % (per side)",   group="💰 Backtest Settings", minval=0, maxval=5, step=0.01)
+
+// ── 1b. EMA Settings ─────────────────────────────────────────────────────────
+i_emaFast         = input.int(20,       title="Fast EMA Length",           group="📈 EMA Settings",      minval=1)
+i_emaSlow         = input.int(50,       title="Slow EMA Length",           group="📈 EMA Settings",      minval=1)
+
+// ── 1c. RSI Settings ─────────────────────────────────────────────────────────
+i_rsiLen          = input.int(14,       title="RSI Length",                group="📊 RSI Settings",      minval=1)
+i_rsiEntry        = input.float(55.0,   title="RSI Entry Threshold (>)",   group="📊 RSI Settings",      minval=1,  maxval=99)
+i_rsiExit         = input.float(45.0,   title="RSI Exit Threshold (<)",    group="📊 RSI Settings",      minval=1,  maxval=99)
+
+// ── 1d. Breakout Settings ─────────────────────────────────────────────────────
+i_brkLookback     = input.int(20,       title="Breakout Lookback (bars)",  group="🚀 Breakout Settings", minval=2)
+
+// ── 1e. ATR / Risk Settings ───────────────────────────────────────────────────
+i_atrLen          = input.int(14,       title="ATR Length",                group="🛡️ Risk Management",   minval=1)
+i_atrMult         = input.float(1.5,    title="ATR Stop-Loss Multiplier",  group="🛡️ Risk Management",   minval=0.1, step=0.1)
+i_rrRatio         = input.float(3.0,    title="Risk-Reward Ratio (1:x)",   group="🛡️ Risk Management",   minval=0.5, step=0.5)
+i_posSize         = input.float(10.0,   title="Position Size (% Equity)",  group="🛡️ Risk Management",   minval=1,   maxval=100, step=1)
+
+// ── 1f. Volume Settings ───────────────────────────────────────────────────────
+i_volMult         = input.float(1.2,    title="Volume Multiplier (x Avg)", group="📦 Volume Filter",     minval=1.0, step=0.1)
+
+// ── 1g. Session Filter ────────────────────────────────────────────────────────
+i_useSession      = input.bool(true,    title="Enable Bursa Session Filter",        group="🕐 Trading Session (GMT+8)")
+i_morningStart    = input.session("0900-1230", title="Morning Session",             group="🕐 Trading Session (GMT+8)")
+i_afternoonStart  = input.session("1430-1700", title="Afternoon Session",           group="🕐 Trading Session (GMT+8)")
+
+// ── 1h. Visual Toggles ────────────────────────────────────────────────────────
+i_showEma         = input.bool(true,    title="Show EMA Lines",            group="🎨 Visuals")
+i_showSignals     = input.bool(true,    title="Show Buy/Sell Signals",     group="🎨 Visuals")
+i_showLevels      = input.bool(true,    title="Show SL / TP Levels",       group="🎨 Visuals")
+
+// =============================================================================
+// ── SECTION 2: INDICATOR CALCULATIONS
+// =============================================================================
+
+// ── 2a. Exponential Moving Averages ──────────────────────────────────────────
+emaFast = ta.ema(close, i_emaFast)
+emaSlow = ta.ema(close, i_emaSlow)
+
+// ── 2b. RSI ──────────────────────────────────────────────────────────────────
+rsiVal  = ta.rsi(close, i_rsiLen)
+
+// ── 2c. ATR (Average True Range) ─────────────────────────────────────────────
+atrVal  = ta.atr(i_atrLen)
+
+// ── 2d. Breakout Level – highest high of previous N candles ──────────────────
+// Using [1] offset ensures we look at CLOSED bars only → no repainting
+prevHigh = ta.highest(high[1], i_brkLookback)
+
+// ── 2e. Volume Average ───────────────────────────────────────────────────────
+volAvg  = ta.sma(volume, i_brkLookback)
+
+// =============================================================================
+// ── SECTION 3: SESSION FILTER (Bursa Malaysia GMT+8)
+// =============================================================================
+// TradingView session strings compare against the chart's exchange timezone.
+// For Bursa Malaysia charts the exchange TZ is already Asia/Kuala_Lumpur (GMT+8),
+// so no manual offset is required.
+
+inMorning   = not i_useSession or time(timeframe.period, i_morningStart,   "Asia/Kuala_Lumpur") != 0
+inAfternoon = not i_useSession or time(timeframe.period, i_afternoonStart,  "Asia/Kuala_Lumpur") != 0
+inSession   = inMorning or inAfternoon
+
+// =============================================================================
+// ── SECTION 4: ENTRY CONDITIONS (ALL must be TRUE simultaneously)
+// =============================================================================
+
+// Condition 1 – Bullish EMA trend: fast above slow
+c_emaTrend  = emaFast > emaSlow
+
+// Condition 2 – Price closed above both EMAs
+c_priceAboveEma = close > emaFast and close > emaSlow
+
+// Condition 3 – RSI shows bullish momentum
+c_rsi       = rsiVal > i_rsiEntry
+
+// Condition 4 – Candle closes above highest high of previous N bars (breakout)
+c_breakout  = close > prevHigh
+
+// Condition 5 – Volume surge: current volume exceeds multiplier × average
+c_volume    = volume > (volAvg * i_volMult)
+
+// Composite entry signal
+longCondition = c_emaTrend and c_priceAboveEma and c_rsi and c_breakout and c_volume and inSession
+
+// =============================================================================
+// ── SECTION 5: EXIT CONDITIONS
+// =============================================================================
+
+// ── 5a. Compute SL and TP from entry price ────────────────────────────────────
+// strategy.position_avg_price returns the average entry price of the open trade.
+entryPrice  = strategy.position_avg_price
+
+// Stop-loss distance = ATR × multiplier (captured at entry)
+// We store ATR at the bar where entry fired using a var to avoid repainting.
+var float slDist = na
+var float slLevel = na
+var float tpLevel = na
+
+// Update levels only when a new position is just opened (transition from flat to long)
+if strategy.position_size == 0 and longCondition
+    slDist  := atrVal * i_atrMult
+    slLevel := entryPrice - slDist                       // SL = Entry − (ATR × mult)
+    tpLevel := entryPrice + (slDist * i_rrRatio)         // TP = Entry + (ATR × mult × RR)
+
+// ── 5b. Trend-reversal exits ─────────────────────────────────────────────────
+// EMA bearish cross: fast crosses below slow
+c_emaCross  = ta.crossunder(emaFast, emaSlow)
+
+// RSI drops below exit threshold
+c_rsiExit   = rsiVal < i_rsiExit
+
+// Composite soft exit (close trade on next open)
+softExit = (c_emaCross or c_rsiExit) and strategy.position_size > 0
+
+// =============================================================================
+// ── SECTION 6: STRATEGY EXECUTION
+// =============================================================================
+
+// ── 6a. Entry ────────────────────────────────────────────────────────────────
+if longCondition and strategy.position_size == 0
+    strategy.entry(
+         id       = "Long",
+         direction = strategy.long,
+         qty_type  = strategy.percent_of_equity,
+         qty       = i_posSize,
+         comment   = "BUY BREAKOUT"
+         )
+
+// ── 6b. Hard exits via strategy.exit (SL & TP) ───────────────────────────────
+// strategy.exit fires even if the soft-exit condition is not met,
+// ensuring the ATR stop and profit target are always honoured.
+if strategy.position_size > 0
+    strategy.exit(
+         id        = "SL/TP",
+         from_entry = "Long",
+         stop      = slLevel,
+         limit     = tpLevel,
+         comment   = "SL/TP EXIT"
+         )
+
+// ── 6c. Soft trend-reversal exit ─────────────────────────────────────────────
+if softExit
+    strategy.close(
+         id      = "Long",
+         comment = "TREND REVERSAL EXIT"
+         )
+
+// =============================================================================
+// ── SECTION 7: VISUAL PLOTS
+// =============================================================================
+
+// ── 7a. EMA Lines ─────────────────────────────────────────────────────────────
+plot(i_showEma ? emaFast : na,
+     title  = "EMA Fast",
+     color  = color.new(color.blue, 0),
+     linewidth = 2)
+
+plot(i_showEma ? emaSlow : na,
+     title  = "EMA Slow",
+     color  = color.new(color.orange, 0),
+     linewidth = 2)
+
+// ── 7b. Buy / Sell signal markers ────────────────────────────────────────────
+plotshape(
+     i_showSignals and longCondition and strategy.position_size == 0 ? low : na,
+     title    = "Buy Signal",
+     style    = shape.labelup,
+     location = location.belowbar,
+     color    = color.new(color.lime, 0),
+     textcolor = color.black,
+     text     = "BUY",
+     size     = size.small)
+
+plotshape(
+     i_showSignals and softExit ? high : na,
+     title    = "Sell Signal",
+     style    = shape.labeldown,
+     location = location.abovebar,
+     color    = color.new(color.red, 0),
+     textcolor = color.white,
+     text     = "EXIT",
+     size     = size.small)
+
+// ── 7c. SL / TP horizontal levels (only while in a trade) ────────────────────
+// Plot persistent lines using plot() with the stored var levels
+plot(i_showLevels and strategy.position_size > 0 ? slLevel : na,
+     title     = "Stop Loss",
+     color     = color.new(color.red, 30),
+     linewidth  = 1,
+     style     = plot.style_linebr)
+
+plot(i_showLevels and strategy.position_size > 0 ? tpLevel : na,
+     title     = "Take Profit",
+     color     = color.new(color.green, 30),
+     linewidth  = 1,
+     style     = plot.style_linebr)
+
+// ── 7d. Background highlight during active session ───────────────────────────
+bgcolor(
+     i_useSession and inSession ? color.new(color.teal, 95) : na,
+     title = "Active Session BG")
+
+// ── 7e. Breakout level reference line ────────────────────────────────────────
+plot(prevHigh,
+     title     = "Breakout Level (prev N-bar High)",
+     color     = color.new(color.purple, 60),
+     linewidth  = 1,
+     style     = plot.style_linebr)
+
+// =============================================================================
+// ── SECTION 8: INFORMATION TABLE (top-right dashboard)
+// =============================================================================
+var table infoTable = table.new(
+     position  = position.top_right,
+     columns   = 2,
+     rows      = 9,
+     bgcolor   = color.new(color.black, 70),
+     border_color = color.new(color.gray, 50),
+     border_width = 1)
+
+// Helper to set a table row
+f_tableRow(row, label, val, valColor) =>
+    table.cell(infoTable, 0, row, label,
+         text_color = color.silver, text_size = size.small, bgcolor = color.new(color.black, 70))
+    table.cell(infoTable, 1, row, val,
+         text_color = valColor,    text_size = size.small, bgcolor = color.new(color.black, 70))
+
+if barstate.islast
+    f_tableRow(0, "Strategy",    "KLSE Shariah Breakout",         color.white)
+    f_tableRow(1, "EMA Trend",   emaFast > emaSlow ? "BULLISH ▲" : "BEARISH ▼",
+                                  emaFast > emaSlow ? color.lime   : color.red)
+    f_tableRow(2, "RSI",         str.tostring(math.round(rsiVal, 2)),
+                                  rsiVal > i_rsiEntry ? color.lime : rsiVal < i_rsiExit ? color.red : color.yellow)
+    f_tableRow(3, "ATR",         str.tostring(math.round(atrVal, 4)), color.white)
+    f_tableRow(4, "In Session",  inSession ? "YES ✓" : "NO ✗",
+                                  inSession ? color.lime : color.gray)
+    f_tableRow(5, "Position",    strategy.position_size > 0 ? "LONG ●" : "FLAT ○",
+                                  strategy.position_size > 0 ? color.lime : color.gray)
+    f_tableRow(6, "SL Level",    strategy.position_size > 0 ? str.tostring(math.round(slLevel, 4)) : "—", color.red)
+    f_tableRow(7, "TP Level",    strategy.position_size > 0 ? str.tostring(math.round(tpLevel, 4)) : "—", color.green)
+    f_tableRow(8, "Vol vs Avg",  str.tostring(math.round(volume / volAvg, 2)) + "x",
+                                  volume > volAvg * i_volMult ? color.lime : color.gray)
+
+// =============================================================================
+// ── SECTION 9: ALERT CONDITIONS (Webhook-Friendly JSON)
+// =============================================================================
+
+// ── Alert 1: Long Entry ───────────────────────────────────────────────────────
+alertcondition(
+     condition = longCondition and strategy.position_size[1] == 0,
+     title     = "🟢 Long Entry",
+     message   = '{"action":"buy","symbol":"{{ticker}}","price":"{{close}}","sl":"' +
+                 str.tostring(math.round(close - atrVal * i_atrMult, 4)) + '","tp":"' +
+                 str.tostring(math.round(close + atrVal * i_atrMult * i_rrRatio, 4)) +
+                 '","timeframe":"{{interval}}","time":"{{timenow}}"}'
+     )
+
+// ── Alert 2: Stop Loss Hit ────────────────────────────────────────────────────
+alertcondition(
+     condition = strategy.position_size[1] > 0 and strategy.position_size == 0 and
+                 close <= slLevel[1],
+     title     = "🔴 Stop Loss Hit",
+     message   = '{"action":"sl_hit","symbol":"{{ticker}}","price":"{{close}}","timeframe":"{{interval}}","time":"{{timenow}}"}'
+     )
+
+// ── Alert 3: Take Profit Hit ──────────────────────────────────────────────────
+alertcondition(
+     condition = strategy.position_size[1] > 0 and strategy.position_size == 0 and
+                 close >= tpLevel[1],
+     title     = "💰 Take Profit Hit",
+     message   = '{"action":"tp_hit","symbol":"{{ticker}}","price":"{{close}}","timeframe":"{{interval}}","time":"{{timenow}}"}'
+     )
+
+// ── Alert 4: EMA Bearish Cross ────────────────────────────────────────────────
+alertcondition(
+     condition = c_emaCross,
+     title     = "⚠️ EMA Bearish Cross",
+     message   = '{"action":"ema_cross_bearish","symbol":"{{ticker}}","price":"{{close}}","timeframe":"{{interval}}","time":"{{timenow}}"}'
+     )
+
+// ── Alert 5: RSI Exit ─────────────────────────────────────────────────────────
+alertcondition(
+     condition = strategy.position_size > 0 and rsiVal < i_rsiExit,
+     title     = "⚠️ RSI Exit Signal",
+     message   = '{"action":"rsi_exit","symbol":"{{ticker}}","price":"{{close}}","rsi":"' +
+                 str.tostring(math.round(rsiVal, 2)) + '","timeframe":"{{interval}}","time":"{{timenow}}"}'
+     )
+
+// =============================================================================
+// END OF SCRIPT
+// =============================================================================
