@@ -157,9 +157,7 @@ softExit = (c_emaCross or c_rsiExit) and strategy.position_size > 0
 // =============================================================================
 
 // ── 6a. Entry ────────────────────────────────────────────────────────────────
-// strategy.entry() does not accept qty_type/qty — sizing comes from the
-// strategy() header (default_qty_type + default_qty_value). To honour the
-// i_posSize input at runtime we calculate the equivalent contract count here.
+// qty_type is not a valid strategy.entry() param; calculate unit count manually.
 if longCondition and strategy.position_size == 0
     _qty = (strategy.equity * (i_posSize / 100)) / close
     strategy.entry(
@@ -168,17 +166,23 @@ if longCondition and strategy.position_size == 0
          qty       = _qty,
          comment   = "BUY BREAKOUT"
          )
+    // alert() accepts series strings — embed live SL/TP values in the JSON payload
+    alert(
+         '{"action":"buy","symbol":"' + syminfo.ticker +
+         '","price":"'  + str.tostring(close) +
+         '","sl":"'     + str.tostring(math.round(close - atrVal * i_atrMult, 4)) +
+         '","tp":"'     + str.tostring(math.round(close + atrVal * i_atrMult * i_rrRatio, 4)) +
+         '","timeframe":"' + timeframe.period + '"}',
+         alert.freq_once_per_bar)
 
 // ── 6b. Hard exits via strategy.exit (SL & TP) ───────────────────────────────
-// strategy.exit fires even if the soft-exit condition is not met,
-// ensuring the ATR stop and profit target are always honoured.
 if strategy.position_size > 0
     strategy.exit(
-         id        = "SL/TP",
+         id         = "SL/TP",
          from_entry = "Long",
-         stop      = slLevel,
-         limit     = tpLevel,
-         comment   = "SL/TP EXIT"
+         stop       = slLevel,
+         limit      = tpLevel,
+         comment    = "SL/TP EXIT"
          )
 
 // ── 6c. Soft trend-reversal exit ─────────────────────────────────────────────
@@ -187,6 +191,23 @@ if softExit
          id      = "Long",
          comment = "TREND REVERSAL EXIT"
          )
+
+// ── 6d. EMA bearish cross alert ──────────────────────────────────────────────
+if c_emaCross
+    alert(
+         '{"action":"ema_cross_bearish","symbol":"' + syminfo.ticker +
+         '","price":"' + str.tostring(close) +
+         '","timeframe":"' + timeframe.period + '"}',
+         alert.freq_once_per_bar)
+
+// ── 6e. RSI exit alert ───────────────────────────────────────────────────────
+if strategy.position_size > 0 and rsiVal < i_rsiExit
+    alert(
+         '{"action":"rsi_exit","symbol":"' + syminfo.ticker +
+         '","price":"' + str.tostring(close) +
+         '","rsi":"'   + str.tostring(math.round(rsiVal, 2)) +
+         '","timeframe":"' + timeframe.period + '"}',
+         alert.freq_once_per_bar)
 
 // =============================================================================
 // ── SECTION 7: VISUAL PLOTS
@@ -285,49 +306,13 @@ if barstate.islast
                                   volume > volAvg * i_volMult ? color.lime : color.gray)
 
 // =============================================================================
-// ── SECTION 9: ALERT CONDITIONS (Webhook-Friendly JSON)
+// ── SECTION 9: NOTES ON ALERTS
 // =============================================================================
-
-// ── Alert 1: Long Entry ───────────────────────────────────────────────────────
-alertcondition(
-     condition = longCondition and strategy.position_size[1] == 0,
-     title     = "🟢 Long Entry",
-     message   = '{"action":"buy","symbol":"{{ticker}}","price":"{{close}}","sl":"' +
-                 str.tostring(math.round(close - atrVal * i_atrMult, 4)) + '","tp":"' +
-                 str.tostring(math.round(close + atrVal * i_atrMult * i_rrRatio, 4)) +
-                 '","timeframe":"{{interval}}","time":"{{timenow}}"}'
-     )
-
-// ── Alert 2: Stop Loss Hit ────────────────────────────────────────────────────
-alertcondition(
-     condition = strategy.position_size[1] > 0 and strategy.position_size == 0 and
-                 close <= slLevel[1],
-     title     = "🔴 Stop Loss Hit",
-     message   = '{"action":"sl_hit","symbol":"{{ticker}}","price":"{{close}}","timeframe":"{{interval}}","time":"{{timenow}}"}'
-     )
-
-// ── Alert 3: Take Profit Hit ──────────────────────────────────────────────────
-alertcondition(
-     condition = strategy.position_size[1] > 0 and strategy.position_size == 0 and
-                 close >= tpLevel[1],
-     title     = "💰 Take Profit Hit",
-     message   = '{"action":"tp_hit","symbol":"{{ticker}}","price":"{{close}}","timeframe":"{{interval}}","time":"{{timenow}}"}'
-     )
-
-// ── Alert 4: EMA Bearish Cross ────────────────────────────────────────────────
-alertcondition(
-     condition = c_emaCross,
-     title     = "⚠️ EMA Bearish Cross",
-     message   = '{"action":"ema_cross_bearish","symbol":"{{ticker}}","price":"{{close}}","timeframe":"{{interval}}","time":"{{timenow}}"}'
-     )
-
-// ── Alert 5: RSI Exit ─────────────────────────────────────────────────────────
-alertcondition(
-     condition = strategy.position_size > 0 and rsiVal < i_rsiExit,
-     title     = "⚠️ RSI Exit Signal",
-     message   = '{"action":"rsi_exit","symbol":"{{ticker}}","price":"{{close}}","rsi":"' +
-                 str.tostring(math.round(rsiVal, 2)) + '","timeframe":"{{interval}}","time":"{{timenow}}"}'
-     )
+// All webhook-friendly JSON alerts are fired via alert() calls embedded
+// directly in the strategy execution blocks above (Section 6).
+// alertcondition() was removed because its "message" parameter only accepts
+// const string — it cannot contain runtime values like str.tostring().
+// alert() has no such restriction and fires the correct live values.
 
 // =============================================================================
 // END OF SCRIPT
