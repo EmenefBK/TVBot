@@ -200,7 +200,7 @@ if c_emaCross
          '","timeframe":"' + timeframe.period + '"}',
          alert.freq_once_per_bar)
 
-// ── 6e. RSI exit alert ───────────────────────────────────────────────────────
+// ── 6e. RSI exit alert ─────────────────────────────────────────────────────────
 if strategy.position_size > 0 and rsiVal < i_rsiExit
     alert(
          '{"action":"rsi_exit","symbol":"' + syminfo.ticker +
