@@ -19,8 +19,8 @@ strategy(
      shorttitle           = "KLSE-SB",
      overlay              = true,
      initial_capital      = 10000,          // Default initial capital (MYR)
-     default_qty_type     = strategy.percent_of_equity,
-     default_qty_value    = 10,             // 10% of equity per trade
+     default_qty_type     = strategy.fixed,   // overridden per-entry via calculated qty
+     default_qty_value    = 1,
      pyramiding           = 0,             // No pyramiding – one position at a time
      calc_on_every_tick   = false,         // Avoid repainting; evaluate on bar close
      process_orders_on_close = false,      // Orders fill on next bar open (realistic)
@@ -157,12 +157,15 @@ softExit = (c_emaCross or c_rsiExit) and strategy.position_size > 0
 // =============================================================================
 
 // ── 6a. Entry ────────────────────────────────────────────────────────────────
+// strategy.entry() does not accept qty_type/qty — sizing comes from the
+// strategy() header (default_qty_type + default_qty_value). To honour the
+// i_posSize input at runtime we calculate the equivalent contract count here.
 if longCondition and strategy.position_size == 0
+    _qty = (strategy.equity * (i_posSize / 100)) / close
     strategy.entry(
-         id       = "Long",
+         id        = "Long",
          direction = strategy.long,
-         qty_type  = strategy.percent_of_equity,
-         qty       = i_posSize,
+         qty       = _qty,
          comment   = "BUY BREAKOUT"
          )
 
