@@ -289,21 +289,21 @@ f_tableRow(row, label, val, valColor) =>
     table.cell(infoTable, 1, row, val,
          text_color = valColor,    text_size = size.small, bgcolor = color.new(color.black, 70))
 
-if barstate.islast
-    f_tableRow(0, "Strategy",    "KLSE Shariah Breakout",         color.white)
-    f_tableRow(1, "EMA Trend",   emaFast > emaSlow ? "BULLISH ▲" : "BEARISH ▼",
-                                  emaFast > emaSlow ? color.lime   : color.red)
-    f_tableRow(2, "RSI",         str.tostring(math.round(rsiVal, 2)),
-                                  rsiVal > i_rsiEntry ? color.lime : rsiVal < i_rsiExit ? color.red : color.yellow)
-    f_tableRow(3, "ATR",         str.tostring(math.round(atrVal, 4)), color.white)
-    f_tableRow(4, "In Session",  inSession ? "YES ✓" : "NO ✗",
-                                  inSession ? color.lime : color.gray)
-    f_tableRow(5, "Position",    strategy.position_size > 0 ? "LONG ●" : "FLAT ○",
-                                  strategy.position_size > 0 ? color.lime : color.gray)
-    f_tableRow(6, "SL Level",    strategy.position_size > 0 ? str.tostring(math.round(slLevel, 4)) : "—", color.red)
-    f_tableRow(7, "TP Level",    strategy.position_size > 0 ? str.tostring(math.round(tpLevel, 4)) : "—", color.green)
-    f_tableRow(8, "Vol vs Avg",  str.tostring(math.round(volume / volAvg, 2)) + "x",
-                                  volume > volAvg * i_volMult ? color.lime : color.gray)
+// table.cell() overwrites on every bar — no barstate.islast guard needed
+f_tableRow(0, "Strategy",    "KLSE Shariah Breakout",         color.white)
+f_tableRow(1, "EMA Trend",   emaFast > emaSlow ? "BULLISH ▲" : "BEARISH ▼",
+                              emaFast > emaSlow ? color.lime   : color.red)
+f_tableRow(2, "RSI",         str.tostring(math.round(rsiVal, 2)),
+                              rsiVal > i_rsiEntry ? color.lime : rsiVal < i_rsiExit ? color.red : color.yellow)
+f_tableRow(3, "ATR",         str.tostring(math.round(atrVal, 4)), color.white)
+f_tableRow(4, "In Session",  inSession ? "YES ✓" : "NO ✗",
+                              inSession ? color.lime : color.gray)
+f_tableRow(5, "Position",    strategy.position_size > 0 ? "LONG ●" : "FLAT ○",
+                              strategy.position_size > 0 ? color.lime : color.gray)
+f_tableRow(6, "SL Level",    strategy.position_size > 0 ? str.tostring(math.round(slLevel, 4)) : "—", color.red)
+f_tableRow(7, "TP Level",    strategy.position_size > 0 ? str.tostring(math.round(tpLevel, 4)) : "—", color.green)
+f_tableRow(8, "Vol vs Avg",  str.tostring(math.round(volume / volAvg, 2)) + "x",
+                              volume > volAvg * i_volMult ? color.lime : color.gray)
 
 // =============================================================================
 // ── SECTION 9: NOTES ON ALERTS
